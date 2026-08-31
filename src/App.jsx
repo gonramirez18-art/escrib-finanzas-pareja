@@ -212,6 +212,19 @@ export default function App() {
     return { meses, totalAcumulado: acumulado };
   }, [txs]);
 
+  // Pendientes de pago: de todos los meses, no solo el filtrado, para no perderlos de vista.
+  const pendientesGlobal = useMemo(
+    () =>
+      txs
+        .filter((t) => t.kind === "gasto" && t.status === "pendiente")
+        .sort((a, b) => (a.date < b.date ? -1 : 1)),
+    [txs]
+  );
+  const totalPendienteGlobal = useMemo(
+    () => pendientesGlobal.reduce((s, t) => s + (Number(t.amount) || 0), 0),
+    [pendientesGlobal]
+  );
+
   const categoryData = useMemo(() => {
     const map = {};
     monthTxs
@@ -257,25 +270,27 @@ export default function App() {
     <div className="fp-root">
       <style>{CSS}</style>
 
-      <header className="fp-header">
-        <div className="fp-header-top">
-          <h1>Libro de cuentas</h1>
-          <span className={`fp-save fp-save-${saveStatus}`}>
-            {saveStatus === "saving" ? "Guardando…" : saveStatus === "error" ? "Sin conexión" : "Guardado"}
-          </span>
+      <header className="fp-header fp-hero">
+        <div className="fp-hero-overlay">
+          <div className="fp-header-top">
+            <h1>Libro de cuentas</h1>
+            <span className={`fp-save fp-save-${saveStatus}`}>
+              {saveStatus === "saving" ? "Guardando…" : saveStatus === "error" ? "Sin conexión" : "Guardado"}
+            </span>
+          </div>
+          <NamesEditor
+            people={people}
+            editing={editingNames}
+            setEditing={setEditingNames}
+            onSave={(p) => {
+              setPeople(p);
+              setEditingNames(false);
+            }}
+          />
+          <p className="fp-note">
+            Los datos se comparten entre quien tenga este link. Se sincroniza automáticamente cada pocos segundos.
+          </p>
         </div>
-        <NamesEditor
-          people={people}
-          editing={editingNames}
-          setEditing={setEditingNames}
-          onSave={(p) => {
-            setPeople(p);
-            setEditingNames(false);
-          }}
-        />
-        <p className="fp-note">
-          Los datos se comparten entre quien tenga este link. Se sincroniza automáticamente cada pocos segundos.
-        </p>
       </header>
 
       <section className="fp-comun-card">
@@ -297,6 +312,33 @@ export default function App() {
             </option>
           ))}
         </select>
+      </section>
+
+      <section className="fp-progress">
+        <div className="fp-progress-head">
+          <span>Total del mes</span>
+          <span className="fp-num">{fmt(totals.gastoPagado + totals.gastoPendiente)}</span>
+        </div>
+        <div className="fp-progress-bar">
+          <div
+            className="fp-progress-fill"
+            style={{
+              width: `${
+                totals.gastoPagado + totals.gastoPendiente > 0
+                  ? (totals.gastoPagado / (totals.gastoPagado + totals.gastoPendiente)) * 100
+                  : 0
+              }%`,
+            }}
+          />
+        </div>
+        <div className="fp-progress-legend">
+          <span>
+            <i className="fp-dot fp-dot-teal" /> {fmt(totals.gastoPagado)} pagado
+          </span>
+          <span>
+            <i className="fp-dot fp-dot-gold" /> {fmt(totals.gastoPendiente)} falta por pagar
+          </span>
+        </div>
       </section>
 
       <section className="fp-summary">
@@ -372,6 +414,20 @@ export default function App() {
           </div>
         </div>
       </section>
+
+      {pendientesGlobal.length > 0 && (
+        <section className="fp-pendientes">
+          <div className="fp-list-header">
+            <h2>Pendientes de pago</h2>
+            <span className="fp-pendientes-total">{fmt(totalPendienteGlobal)} en total</span>
+          </div>
+          <div className="fp-list">
+            {pendientesGlobal.map((t) => (
+              <TxRow key={t.id} tx={t} people={people} onToggle={() => handleToggle(t.id)} onRemove={() => removeTx(t.id)} />
+            ))}
+          </div>
+        </section>
+      )}
 
       {historialDiferencias.meses.length > 0 && (
         <section className="fp-acumulado">
@@ -859,6 +915,26 @@ const CSS = `
 .fp-spinner { width: 22px; height: 22px; border: 2px solid var(--fp-line); border-top-color: var(--fp-teal); border-radius: 50%; animation: fp-spin 0.8s linear infinite; }
 @keyframes fp-spin { to { transform: rotate(360deg); } }
 
+.fp-hero {
+  position: relative;
+  margin: -28px -20px 22px;
+  min-height: 230px;
+  display: flex;
+  align-items: flex-end;
+  background-image: linear-gradient(180deg, rgba(35, 43, 36, 0.1) 0%, rgba(35, 43, 36, 0.85) 100%), url('/pareja.jpg');
+  background-size: cover;
+  background-position: center 28%;
+  border-radius: 0 0 18px 18px;
+  overflow: hidden;
+}
+.fp-hero-overlay { width: 100%; padding: 18px 20px 20px; box-sizing: border-box; }
+.fp-hero h1 { color: #fff; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.35); }
+.fp-hero .fp-save { color: rgba(255, 255, 255, 0.85); }
+.fp-hero .fp-save-saving { color: #f0cf7a; }
+.fp-hero .fp-save-error { color: #f3a99a; }
+.fp-hero .fp-names-display { color: rgba(255, 255, 255, 0.88); }
+.fp-hero .fp-note { color: rgba(255, 255, 255, 0.72); }
+
 .fp-header-top { display: flex; align-items: baseline; justify-content: space-between; }
 .fp-header h1 {
   font-family: var(--fp-font-display);
@@ -925,6 +1001,20 @@ const CSS = `
 .fp-comun-breakdown { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 11.5px; opacity: 0.8; font-family: var(--fp-font-mono); }
 
 .fp-monthbar { margin-top: 22px; }
+
+.fp-progress { margin-top: 14px; background: var(--fp-paper-raised); border: 1px solid var(--fp-line); border-radius: 8px; padding: 14px 16px; }
+.fp-progress-head { display: flex; align-items: baseline; justify-content: space-between; font-size: 13px; color: var(--fp-ink-soft); }
+.fp-progress-head .fp-num { font-size: 16px; font-weight: 600; color: var(--fp-ink); }
+.fp-progress-bar { margin-top: 10px; height: 8px; background: var(--fp-gold-soft); border-radius: 20px; overflow: hidden; }
+.fp-progress-fill { height: 100%; background: var(--fp-teal); border-radius: 20px; transition: width 0.3s ease; }
+.fp-progress-legend { margin-top: 9px; display: flex; gap: 16px; font-size: 12px; color: var(--fp-ink-soft); flex-wrap: wrap; }
+.fp-progress-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.fp-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.fp-dot-teal { background: var(--fp-teal); }
+.fp-dot-gold { background: var(--fp-gold); }
+
+.fp-pendientes { margin-top: 26px; }
+.fp-pendientes-total { font-family: var(--fp-font-mono); font-size: 13px; color: var(--fp-gold); font-weight: 600; }
 .fp-select {
   font-family: var(--fp-font-body);
   font-size: 13px;
