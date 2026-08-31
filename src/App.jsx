@@ -44,6 +44,7 @@ export default function App() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingNames, setEditingNames] = useState(false);
   const [showHistorial, setShowHistorial] = useState(false);
+  const [assigningId, setAssigningId] = useState(null);
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
 
   // Evita que una actualización que llega del otro celular (polling) dispare
@@ -226,10 +227,23 @@ export default function App() {
   // ---- actions ----
   const addTx = (tx) => setTxs((prev) => [...prev, { ...tx, id: uid() }]);
   const removeTx = (id) => setTxs((prev) => prev.filter((t) => t.id !== id));
-  const toggleStatus = (id) =>
-    setTxs((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, status: t.status === "pagado" ? "pendiente" : "pagado" } : t))
-    );
+
+  // Si ya está pagado, un clic lo vuelve a pendiente directo.
+  // Si está pendiente, no sabemos quién lo va a pagar todavía: abrimos el modal para preguntarlo.
+  const handleToggle = (id) => {
+    const tx = txs.find((t) => t.id === id);
+    if (!tx) return;
+    if (tx.status === "pagado") {
+      setTxs((prev) => prev.map((t) => (t.id === id ? { ...t, status: "pendiente" } : t)));
+    } else {
+      setAssigningId(id);
+    }
+  };
+
+  const confirmPayment = (who) => {
+    setTxs((prev) => prev.map((t) => (t.id === assigningId ? { ...t, who, status: "pagado" } : t)));
+    setAssigningId(null);
+  };
 
   if (!loaded) {
     return (
@@ -311,13 +325,25 @@ export default function App() {
             {totals.diferencia === 0 ? (
               <span>Están a mano este mes.</span>
             ) : totals.diferencia > 0 ? (
-              <span>
-                <strong>{people.A}</strong> puso {fmt(Math.abs(totals.diferencia))} más que {people.B}.
-              </span>
+              <>
+                <span>
+                  <strong>{people.A}</strong> puso {fmt(Math.abs(totals.diferencia))} más que {people.B}.
+                </span>
+                <div className="fp-debe">
+                  → <strong>{people.B}</strong> le debe <strong>{fmt(Math.abs(totals.diferencia) / 2)}</strong> a{" "}
+                  {people.A} para quedar a mano.
+                </div>
+              </>
             ) : (
-              <span>
-                <strong>{people.B}</strong> puso {fmt(Math.abs(totals.diferencia))} más que {people.A}.
-              </span>
+              <>
+                <span>
+                  <strong>{people.B}</strong> puso {fmt(Math.abs(totals.diferencia))} más que {people.A}.
+                </span>
+                <div className="fp-debe">
+                  → <strong>{people.A}</strong> le debe <strong>{fmt(Math.abs(totals.diferencia) / 2)}</strong> a{" "}
+                  {people.B} para quedar a mano.
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -365,6 +391,13 @@ export default function App() {
                   </>
                 )}
               </div>
+              {historialDiferencias.totalAcumulado !== 0 && (
+                <div className="fp-acumulado-debe">
+                  {historialDiferencias.totalAcumulado > 0 ? people.B : people.A} le debe{" "}
+                  {fmt(Math.abs(historialDiferencias.totalAcumulado) / 2)} a{" "}
+                  {historialDiferencias.totalAcumulado > 0 ? people.A : people.B} para quedar a mano.
+                </div>
+              )}
             </div>
             <button type="button" className="fp-acumulado-toggle">
               {showHistorial ? "Ocultar detalle" : "Ver detalle"}
@@ -457,7 +490,7 @@ export default function App() {
           <div className="fp-empty">No hay movimientos para este filtro. Agregá el primero del mes.</div>
         )}
         {filtered.map((t) => (
-          <TxRow key={t.id} tx={t} people={people} onToggle={() => toggleStatus(t.id)} onRemove={() => removeTx(t.id)} />
+          <TxRow key={t.id} tx={t} people={people} onToggle={() => handleToggle(t.id)} onRemove={() => removeTx(t.id)} />
         ))}
       </section>
 
@@ -474,6 +507,44 @@ export default function App() {
           }}
         />
       )}
+
+      {assigningId &&
+        (() => {
+          const tx = txs.find((t) => t.id === assigningId);
+          if (!tx) return null;
+          return (
+            <AssignPaidModal tx={tx} people={people} onCancel={() => setAssigningId(null)} onConfirm={confirmPayment} />
+          );
+        })()}
+    </div>
+  );
+}
+
+function AssignPaidModal({ tx, people, onCancel, onConfirm }) {
+  return (
+    <div className="fp-modal-overlay" onClick={onCancel}>
+      <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="fp-modal-head">
+          <h3>¿Quién lo pagó?</h3>
+          <button type="button" className="fp-icon-btn" onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+        <p className="fp-assign-summary">
+          {tx.description || tx.category} · {fmt(tx.amount)}
+        </p>
+        <div className="fp-who-toggle fp-who-toggle-assign">
+          <button type="button" onClick={() => onConfirm("A")}>
+            {people.A}
+          </button>
+          <button type="button" onClick={() => onConfirm("B")}>
+            {people.B}
+          </button>
+          <button type="button" onClick={() => onConfirm("comun")}>
+            Cuenta común
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -508,7 +579,8 @@ function NamesEditor({ people, editing, setEditing, onSave }) {
 }
 
 function TxRow({ tx, people, onToggle, onRemove }) {
-  const whoLabel = tx.who === "A" ? people.A : tx.who === "B" ? people.B : "Cuenta común";
+  const whoLabel =
+    tx.who === "A" ? people.A : tx.who === "B" ? people.B : tx.who === "comun" ? "Cuenta común" : "Sin asignar";
   const isGasto = tx.kind === "gasto";
   const cuotaLabel =
     isGasto && tx.paymentType === "cuotas" && tx.installment ? `Cuota ${tx.installment.current}/${tx.installment.total}` : null;
@@ -569,7 +641,7 @@ function TxForm({ people, categories, setCategories, defaultDate, onCancel, onSu
       amount: Number(amount),
       date,
       category: kind === "gasto" ? finalCategory : null,
-      who,
+      who: kind === "gasto" && status === "pendiente" ? null : who,
       status: kind === "gasto" ? status : "pagado",
       pot: kind === "aporte" ? pot.trim() || "Ahorro común" : null,
       paymentType: kind === "gasto" ? paymentType : null,
@@ -648,21 +720,6 @@ function TxForm({ people, categories, setCategories, defaultDate, onCancel, onSu
             )}
 
             <label className="fp-field">
-              <span>¿Quién pagó?</span>
-              <div className="fp-who-toggle">
-                <button type="button" className={who === "A" ? "active" : ""} onClick={() => setWho("A")}>
-                  {people.A}
-                </button>
-                <button type="button" className={who === "B" ? "active" : ""} onClick={() => setWho("B")}>
-                  {people.B}
-                </button>
-                <button type="button" className={who === "comun" ? "active" : ""} onClick={() => setWho("comun")}>
-                  Cuenta común
-                </button>
-              </div>
-            </label>
-
-            <label className="fp-field">
               <span>Estado</span>
               <div className="fp-who-toggle">
                 <button type="button" className={status === "pagado" ? "active" : ""} onClick={() => setStatus("pagado")}>
@@ -677,6 +734,25 @@ function TxForm({ people, categories, setCategories, defaultDate, onCancel, onSu
                 </button>
               </div>
             </label>
+
+            {status === "pagado" ? (
+              <label className="fp-field">
+                <span>¿Quién pagó?</span>
+                <div className="fp-who-toggle">
+                  <button type="button" className={who === "A" ? "active" : ""} onClick={() => setWho("A")}>
+                    {people.A}
+                  </button>
+                  <button type="button" className={who === "B" ? "active" : ""} onClick={() => setWho("B")}>
+                    {people.B}
+                  </button>
+                  <button type="button" className={who === "comun" ? "active" : ""} onClick={() => setWho("comun")}>
+                    Cuenta común
+                  </button>
+                </div>
+              </label>
+            ) : (
+              <p className="fp-pending-note">Vas a elegir quién lo pagó cuando lo marques como pagado.</p>
+            )}
 
             <label className="fp-field">
               <span>Forma de pago</span>
@@ -879,6 +955,9 @@ const CSS = `
 .fp-ledger-total .fp-num { font-weight: 600; font-size: 14px; }
 .fp-balance { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--fp-line); font-size: 13px; color: var(--fp-ink-soft); }
 .fp-balance strong { color: var(--fp-ink); }
+.fp-debe { margin-top: 6px; font-size: 13.5px; font-weight: 600; color: var(--fp-teal); }
+.fp-debe strong { color: var(--fp-teal); }
+.fp-acumulado-debe { margin-top: 4px; font-size: 12.5px; font-weight: 600; color: var(--fp-teal); }
 
 .fp-stat-col { display: flex; flex-direction: column; gap: 10px; }
 .fp-stat {
@@ -1011,4 +1090,8 @@ const CSS = `
   background: var(--fp-teal); color: #fff;
   border: none; border-radius: 6px; padding: 12px; cursor: pointer;
 }
+
+.fp-pending-note { font-size: 12.5px; color: var(--fp-ink-soft); margin: -4px 0 0; line-height: 1.5; }
+.fp-assign-summary { font-size: 14px; color: var(--fp-ink-soft); margin: -4px 0 4px; }
+.fp-who-toggle-assign button { padding: 12px 6px; font-size: 13px; }
 `;
